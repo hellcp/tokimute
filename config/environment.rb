@@ -3,7 +3,7 @@ require 'active_record'
 require 'yaml'
 Bundler.require
 
-db_config = YAML.load_file('db/config.yml')[ENV['ENVIRONMENT'] || 'development']
+db_config = YAML.load_file('db/config.yml')[ENV['ENVIRONMENT'] || YAML.load_file('config/config.yml')['env'] || 'development']
 
 ActiveRecord::Base.establish_connection(adapter: db_config['adapter'], database: db_config['database'])
 ActiveRecord::Base.logger = nil

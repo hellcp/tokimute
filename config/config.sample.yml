@@ -1,0 +1,7 @@
+# You can obtain this token in https://discord.com/developers/applications
+discord_token: 
+# This is a set of IDs of admins of the bot
+admins:
+  - 98466323452948480
+# Environment of the bot, options are [test, development, production]
+env: development

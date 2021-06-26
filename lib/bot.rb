@@ -5,12 +5,13 @@ START = "\u23EE"
 FINISH = "\u23ED"
 FORWARD = "\u25B6"
 BACK = "\u25C0"
+SAVE = "\u{1F4BE}"
 
 PAGE_SIZE = 10
 
 class Bot
 
-  def self.paginated(event, title, description, array)
+  def self.paginated(bot, event, title, description, array)
     current_index = 0
     message = event.send_embed('', nil) do |embed|
       embed.title = title
@@ -22,51 +23,55 @@ class Bot
       message.react BACK
       message.react FORWARD
       message.react FINISH
-      while going = true
-        bot.add_await!(Discordrb::Events::ReactionAddEvent, message: message, timeout: 150) do |reaction_event|
-          case reaction_event.emoji.name
-            when START
-              current_index = 0
-              show_index(message, array[0..PAGE_SIZE - 1])
-            when FINISH
-              current_index = array.length/PAGE_SIZE - 1
-              show_index(message, array[current_index * PAGE_SIZE..user_posts.length])
-            when FORWARD
-              unless array.length/PAGE_SIZE - 1 == current_index
-                current_index += 1
-                show_index(message, array[current_index * PAGE_SIZE..(current_index + 1) * PAGE_SIZE - 1])
-              end
-            when BACK
-              unless current_index == 0
-                current_index -= 1
-                show_index(message, array[current_index * PAGE_SIZE..(current_index + 1) * PAGE_SIZE - 1])
-              end
-          end
-          message.delete_reaction(reaction_event.user, reaction_event.emoji.name)
+      groups = array.each_slice(PAGE_SIZE).to_a
+      p groups
+      bot.add_await!(Discordrb::Events::ReactionAddEvent, message: message, timeout: 150) do |reaction_event|
+        case reaction_event.emoji.name
+          when START
+            current_index = 0
+            show_index(message, title, description, groups[current_index])
+          when FINISH
+            current_index = groups.length - 1
+            show_index(message, title, description, groups[current_index])
+          when FORWARD
+            unless groups.length - 1 == current_index
+              current_index += 1
+              show_index(message, title, description, groups[current_index])
+            end
+          when BACK
+            unless current_index == 0
+              current_index -= 1
+              show_index(message, title, description, groups[current_index])
+            end
         end
-        time = message.edited_timestamp || message.timestamp
-        going = false if Time.now > time + 150
+        message.delete_reaction(reaction_event.user, reaction_event.emoji.name)
+        false
       end
       message.delete_all_reactions
     end
   end
   
-  def self.show_index(message, fields)
+  def self.show_index(message, title, description, fields)
     embed = Discordrb::Webhooks::Embed.new
+    embed.title = title
+    embed.description = description
     fields.map { |post| embed.add_field(name: post[:name], value: post[:value], inline: false) }
+    p embed
     message.edit('', embed)
   end
   
   def self.run
-    bot = Discordrb::Commands::CommandBot.new token: ENV['DISCORD_TOKEN'], prefix: '!'
+    token = ENV['DISCORD_TOKEN'] || Config.value(:discord_token)
+    bot = Discordrb::Commands::CommandBot.new token: token, prefix: '!'
 
     bot.command :topic do |event, *args|
-      "Not implemented, sorry"
+      pu = File.readlines('config/pu', chomp: true) - ['e', 'pi', 'li', 'la', 'en'] + args
+      pu.sample(3).join(' ')
     end
 
     bot.command :list do |event, *args|
       discord_id = args.try(:first) || event.author.id
-      discord_id = discord_id.to_i.to_s # the easiest way to extract id from the mention
+      discord_id = discord_id.to_s.gsub(/[<>@!]/, '').to_i.to_s # the easiest way to extract id from the mention
       user = User.find_by(discord_id: discord_id)
       
       user_posts = []
@@ -74,7 +79,11 @@ class Bot
         user_posts << { name: "#{user_post.id.to_s} #{user_post.name}", value: user_post.lines.first.content || "..." }
       end
       return "You don't have any posts yet" if user_posts.length == 0
-      paginated(event, "<@#{user.discord_id}>'s Posts", "You can see the full posts with `!show <id>` and delete with `!delete post <id>`", user_posts)
+      paginated(bot, event, "<@!#{user.discord_id}>'s Posts", "You can see the full posts with `!show <id>` and delete with `!delete post <id>`", user_posts)
+    end
+
+    bot.command :start do |event, *args|
+      "This only works in private messages with me, sorry!"
     end
 
     bot.command :show do |event, *args|
@@ -89,7 +98,7 @@ class Bot
         lines << { name: line.id, value: line.content }
       end
       return "This post doesn't exist" if lines.length == 0
-      paginated(event, "#{post.id} #{post.name}", post.user.discord_id == event.user.id ? "You can delete this post with `!delete post #{post.id}`" : "", lines)
+      paginated(bot, event, "#{post.id} #{post.name}", post.user.discord_id == event.user.id || Config.value(:admins).include?(event.user.id) ? "You can delete this post with `!delete post #{post.id}`" : "", lines)
     end
 
     bot.command :delete do |event, *args|
@@ -103,7 +112,7 @@ class Bot
         when "line"
           line = Line.find_by(id: args[1])
           if line
-            if line.user.discord_id == event.user.id
+            if line.user.discord_id == event.user.id || Config.value(:admins).include?(event.user.id)
               line.destroy
               "Successfully removed the line"
             else
@@ -115,7 +124,7 @@ class Bot
         when "post"
           post = Post.find_by(id: args[1])
           if post
-            if post.user.discord_id == event.user.id
+            if post.user.discord_id == event.user.id || Config.value(:admins).include?(event.user.id)
               Line.where(post: post).destroy_all
               post.destroy
               "Successfully removed the post"
@@ -145,28 +154,21 @@ class Bot
       if event.content.start_with?('!start')
         title = event.content.split(' ')[1..-1].join(' ')
         post = Post.new(name: title, user: user)
-        event.respond "Starting recording \"#{post.name || post.id}\"! Talk to your heart's content, and remember to use !end after you are done. If you need inspiration, use !topic"
-        post.save
-        while going = true
-          event.user.await! do |post_event|
-            if post_event.content.start_with?('!end')
-              post_event.respond "Cool! Post \"#{post.name || post.id}\" was saved. You can see all of your posts in !list"
-              going = false
-            elsif post_event.content.start_with?('!topic')
-              bot.execute_command(:topic, post_event, post_event.content.split(' ')[1..-1])
-            else
-              Line.new(post: post, content: post_event.content).save
-            end
+        event.respond "Starting recording \"#{post.name || post.id}\"! Talk to your heart's content, and remember to use !end after you are done. I will react with #{SAVE} to everything I have saved. If you need inspiration, use !topic"
+        event.user.await! do |post_event|
+          if post_event.content.start_with?('!end')
+            post.save
+            post_event.respond "Cool! Post \"#{post.name || post.id}\" was saved. You can see all of your posts in !list"
+            true
+          elsif post_event.content.start_with?('!topic')
+            bot.execute_command(:topic, post_event, post_event.content.split(' ')[1..-1])
+            false
+          else
+            Line.new(post: post, content: post_event.content).save
+            post_event.message.react SAVE
+            false
           end
         end
-      elsif event.content.start_with?('!topic')
-        bot.execute_command(:topic, event, event.content.split(' ')[1..-1])
-      elsif event.content.start_with?('!list')
-        bot.execute_command(:list, event, event.content.split(' ')[1..-1])
-      elsif event.content.start_with?('!delete')
-        bot.execute_command(:delete, event, event.content.split(' ')[1..-1])
-      elsif event.content.start_with?('!show')
-        bot.execute_command(:show, event, event.content.split(' ')[1..-1])
       end
     end
     bot.run
