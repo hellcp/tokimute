@@ -7,7 +7,7 @@ FORWARD = "\u25B6"
 BACK = "\u25C0"
 SAVE = "\u{1F4BE}"
 
-PAGE_SIZE = 1
+PAGE_SIZE = 10
 
 class Bot
 
@@ -46,7 +46,9 @@ class Bot
         message.delete_reaction(reaction_event.user, reaction_event.emoji.name) if (reaction_event.channel.type != Discordrb::Channel::TYPES[:dm])
         false
       end
-      message.delete_all_reactions
+      [START, FINISH, FORWARD, BACK].each do |emote|
+        message.delete_own_reaction(emote)
+      end
     end
   end
   
@@ -82,7 +84,8 @@ class Bot
     end
 
     bot.command :start do |event, *args|
-      "This only works in private messages with me, sorry!"
+      "This only works in private messages with me, sorry!" if (event.channel.type != Discordrb::Channel::TYPES[:dm])
+      nil
     end
 
     bot.command :show do |event, *args|
@@ -149,23 +152,24 @@ class Bot
         message.delete
         event.respond "If you ever change your mind, just write me here, I will be waiting!"
         nil
-      end
-      if event.content.start_with?('!start')
-        title = event.content.split(' ')[1..-1].join(' ')
-        post = Post.new(name: title, user: user)
-        event.respond "Starting recording \"#{post.name || post.id}\"! Talk to your heart's content, and remember to use !end after you are done. I will react with #{SAVE} to everything I have saved. If you need inspiration, use !topic"
-        event.user.await! do |post_event|
-          if post_event.content.start_with?('!end')
-            post.save
-            post_event.respond "Cool! Post \"#{post.name || post.id}\" was saved. You can see all of your posts in !list"
-            true
-          elsif post_event.content.start_with?('!topic')
-            bot.execute_command(:topic, post_event, post_event.content.split(' ')[1..-1])
-            false
-          else
-            Line.new(post: post, content: post_event.content).save
-            post_event.message.react SAVE
-            false
+      else
+        if event.content.start_with?('!start')
+          title = event.content.split(' ')[1..-1].join(' ')
+          post = Post.new(name: title, user: user)
+          event.respond "Starting recording \"#{post.name || post.id}\"! Talk to your heart's content, and remember to use !end after you are done. I will react with #{SAVE} to everything I have saved. If you need inspiration, use !topic"
+          event.channel.await! do |post_event|
+            if post_event.content.start_with?('!end')
+              post.save
+              post_event.respond "Cool! Post \"#{post.name || post.id}\" was saved. You can see all of your posts in !list"
+              true
+            elsif post_event.content.start_with?('!topic')
+              bot.execute_command(:topic, post_event, post_event.content.split(' ')[1..-1])
+              false
+            else
+              Line.new(post: post, content: post_event.content).save
+              post_event.message.react SAVE
+              false
+            end
           end
         end
       end
