@@ -59,6 +59,27 @@ class Bot
     fields.map { |post| embed.add_field(name: post[:name], value: post[:value], inline: false) }
     message.edit('', embed)
   end
+
+  def self.await_post(event, post)
+    event.channel.await! do |post_event|
+      if post_event.content.start_with?('!end')
+        if post.lines
+          post.save
+          post_event.respond "Cool! Post \"#{post.name || post.id}\" was saved. You can see all of your posts in !list"
+        else
+          post_event.respond "No lines, not saving the post"
+        end
+        true
+      elsif post_event.content.start_with?('!topic')
+        bot.execute_command(:topic, post_event, post_event.content.split(' ')[1..-1])
+        false
+      else
+        Line.new(post: post, content: post_event.content, message_id: post_event.id).save
+        post_event.message.react SAVE
+        false
+      end
+    end
+  end
   
   def self.run
     token = ENV['DISCORD_TOKEN'] || Config.value(:discord_token)
@@ -195,6 +216,21 @@ class Bot
       end
     end
 
+    bot.command :add do |event, *args|
+      if args.length != 1
+        event << "You need to specify id of the post to append"
+        event << "`!add <id>`"
+        return nil
+      end
+      post = Post.find_by(id: args[0])
+      if post
+        event.respond "Starting appending to \"#{post.name || post.id}\"! Talk to your heart's content, and remember to use !end after you are done. I will react with #{SAVE} to everything I have saved."
+        await_post(event, post)
+      else
+        "No such post"
+      end
+    end
+
     bot.message_edit do |event|
       line = Line.find_by(message_id: event.message.id)
       if line
@@ -221,24 +257,7 @@ class Bot
           title = event.content.split(' ')[1..-1].join(' ')
           post = Post.new(name: title, user: user)
           event.respond "Starting recording \"#{post.name || post.id}\"! Talk to your heart's content, and remember to use !end after you are done. I will react with #{SAVE} to everything I have saved. If you need inspiration, use !topic"
-          event.channel.await! do |post_event|
-            if post_event.content.start_with?('!end')
-              if post.lines
-                post.save
-                post_event.respond "Cool! Post \"#{post.name || post.id}\" was saved. You can see all of your posts in !list"
-              else
-                post_event.respond "No lines, not saving the post"
-              end
-              true
-            elsif post_event.content.start_with?('!topic')
-              bot.execute_command(:topic, post_event, post_event.content.split(' ')[1..-1])
-              false
-            else
-              Line.new(post: post, content: post_event.content, message_id: post_event.id).save
-              post_event.message.react SAVE
-              false
-            end
-          end
+          await_post(event, post)
         end
       end
     end
