@@ -24,7 +24,6 @@ class Bot
       message.react FORWARD
       message.react FINISH
       groups = array.each_slice(PAGE_SIZE).to_a
-      p groups
       bot.add_await!(Discordrb::Events::ReactionAddEvent, message: message, timeout: 150) do |reaction_event|
         case reaction_event.emoji.name
           when START
