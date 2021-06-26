@@ -76,7 +76,7 @@ class Bot
       
       user_posts = []
       Post.where(user: user).each do |user_post|
-        user_posts << { name: "#{user_post.id.to_s} #{user_post.name}", value: user_post.lines.first.content || "..." }
+        user_posts << { name: "#{user_post.id.to_s} #{user_post.name}", value: user_post.lines.first&.content || "..." }
       end
       who = event.user.id == user.discord_id ? "You don't" : "<@!#{user.discord_id}> doesn't"
       return "#{who} have any posts yet" if user_posts.length == 0
@@ -100,11 +100,10 @@ class Bot
         lines << { name: line.id, value: line.content }
       end
       return "This post doesn't exist" if lines.length == 0
-      paginated(bot, event, "#{post.id} #{post.name}", post.user.discord_id == event.user.id || Config.value(:admins).include?(event.user.id) ? "You can delete this post with `!delete post #{post.id}`" : "", lines)
+      paginated(bot, event, "#{post.id} #{post.name}", post.user.discord_id == event.user.id || Config.value(:admins).include?(event.user.id) ? "You can delete this post with `!delete post #{post.id}`, change their title with `!edit post <id>`, delete individual lines with `!delete line <id>` and edit them with `!edit line <id>`" : "", lines)
     end
 
     bot.command :delete do |event, *args|
-      p args
       if args.length != 2
         event << "You need to specify type and id of the object to remove"
         event << "`!delete [line|post] <id>`"
@@ -116,7 +115,11 @@ class Bot
           if line
             if line.user.discord_id == event.user.id || Config.value(:admins).include?(event.user.id)
               line.destroy
-              "Successfully removed the line"
+              event.respond "Successfully removed the line"
+              unless line.post.lines
+                line.post.destroy
+                event.respond "Empty post, removing as well"
+              end
             else
               "You don't have permissions to remove this"
             end
@@ -139,6 +142,67 @@ class Bot
       end
     end
 
+    bot.command :edit do |event, *args|
+      if args.length != 2
+        event << "You need to specify type and id of the object to edit"
+        event << "`!edit [line|post] <id>`"
+        return nil
+      end
+      case args[0]
+        when "line"
+          line = Line.find_by(id: args[1])
+          if line
+            if line.user.discord_id == event.user.id
+              event.respond "Enter the new line content for the line below, or use `!abort` to abort the operation. You are editing the following line:\n\n#{line.content}"
+              event.channel.await! do |post_event|
+                if post_event.content.start_with?('!abort')
+                  post_event.respond "Operation aborted"
+                else
+                  line.content = post_event.content
+                  line.message_id = post_event.id
+                  line.save
+                  post_event.respond "Saved new line!"
+                end
+                true
+              end
+            else
+              "You don't have permissions to edit this"
+            end
+          else
+            "No such line \"#{args[1]}\""
+          end
+        when "post"
+          post = Post.find_by(id: args[1])
+          if post
+            if post.user.discord_id == event.user.id
+              event.respond "Enter the new post title for \"#{post.name || post.id}\", or use `!abort` to abort the operation."
+              event.channel.await! do |post_event|
+                if post_event.content.start_with?('!abort')
+                  post_event.respond "Operation aborted"
+                else
+                  post.name = post_event.content
+                  post.save
+                  post_event.respond "Saved post title!"
+                end
+                true
+              end
+            else
+              "You don't have permissions to edit this"
+            end
+          else
+            "No such post \"#{args[1]}\""
+          end
+      end
+    end
+
+    bot.message_edit do |event|
+      line = Line.find_by(message_id: event.message.id)
+      if line
+        line.content = event.content
+        line.save
+      end
+    end
+    
     bot.pm do |event|
       user = User.find_or_create_by(discord_id: event.author.id)
       unless user.accepted_license
@@ -150,7 +214,7 @@ class Bot
           event.respond "Let's do this! Use !start (with optional title) to start and !end to finalize."
         end
         message.delete
-        event.respond "If you ever change your mind, just write me here, I will be waiting!"
+        event.respond "If you ever change your mind, just write me here, I will be waiting!" unless user.accepted_license
         nil
       else
         if event.content.start_with?('!start')
@@ -159,14 +223,18 @@ class Bot
           event.respond "Starting recording \"#{post.name || post.id}\"! Talk to your heart's content, and remember to use !end after you are done. I will react with #{SAVE} to everything I have saved. If you need inspiration, use !topic"
           event.channel.await! do |post_event|
             if post_event.content.start_with?('!end')
-              post.save
-              post_event.respond "Cool! Post \"#{post.name || post.id}\" was saved. You can see all of your posts in !list"
+              if post.lines
+                post.save
+                post_event.respond "Cool! Post \"#{post.name || post.id}\" was saved. You can see all of your posts in !list"
+              else
+                post_event.respond "No lines, not saving the post"
+              end
               true
             elsif post_event.content.start_with?('!topic')
               bot.execute_command(:topic, post_event, post_event.content.split(' ')[1..-1])
               false
             else
-              Line.new(post: post, content: post_event.content).save
+              Line.new(post: post, content: post_event.content, message_id: post_event.id).save
               post_event.message.react SAVE
               false
             end

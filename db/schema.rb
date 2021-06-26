@@ -10,11 +10,13 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema.define(version: 2021_06_25_162000) do
+ActiveRecord::Schema.define(version: 2021_06_26_201746) do
 
   create_table "lines", force: :cascade do |t|
     t.string "content"
     t.integer "post_id"
+    t.integer "message_id"
+    t.index ["message_id"], name: "index_lines_on_message_id"
     t.index ["post_id"], name: "index_lines_on_post_id"
   end
 
