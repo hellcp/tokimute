@@ -7,7 +7,7 @@ FORWARD = "\u25B6"
 BACK = "\u25C0"
 SAVE = "\u{1F4BE}"
 
-PAGE_SIZE = 10
+PAGE_SIZE = 1
 
 class Bot
 
@@ -43,7 +43,7 @@ class Bot
               show_index(message, title, description, groups[current_index])
             end
         end
-        message.delete_reaction(reaction_event.user, reaction_event.emoji.name)
+        message.delete_reaction(reaction_event.user, reaction_event.emoji.name) if (reaction_event.channel.type != Discordrb::Channel::TYPES[:dm])
         false
       end
       message.delete_all_reactions
@@ -55,7 +55,6 @@ class Bot
     embed.title = title
     embed.description = description
     fields.map { |post| embed.add_field(name: post[:name], value: post[:value], inline: false) }
-    p embed
     message.edit('', embed)
   end
   
@@ -77,7 +76,8 @@ class Bot
       Post.where(user: user).each do |user_post|
         user_posts << { name: "#{user_post.id.to_s} #{user_post.name}", value: user_post.lines.first.content || "..." }
       end
-      return "You don't have any posts yet" if user_posts.length == 0
+      who = event.user.id == user.discord_id ? "You don't" : "<@!#{user.discord_id}> doesn't"
+      return "#{who} have any posts yet" if user_posts.length == 0
       paginated(bot, event, "<@!#{user.discord_id}>'s Posts", "You can see the full posts with `!show <id>` and delete with `!delete post <id>`", user_posts)
     end
 
